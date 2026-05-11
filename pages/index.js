@@ -39,7 +39,7 @@ export default function AuthPage() {
       <div className="auth-box" style={{ textAlign:'center' }}>
         <div style={{ fontSize:42, marginBottom:16 }}>📋</div>
         <h1 style={{ fontSize:24, fontWeight:700, marginBottom:8, lineHeight:1.3 }}>
-          Welcome to<br/>Team Task OS
+          Welcome to<br/>Team Task Assist
         </h1>
         <p style={{ fontSize:13, color:'var(--t2)', marginBottom:28, lineHeight:1.6 }}>
           Manage tasks and teams, all in one place.
@@ -62,7 +62,7 @@ export default function AuthPage() {
           <h1 style={{ fontSize:18, fontWeight:600 }}>{isSetup ? 'Create Admin Account' : 'Sign In'}</h1>
         </div>
         {isSetup && <p style={{ fontSize:12, color:'var(--t2)', marginBottom:14, lineHeight:1.5 }}>
-          This will be the administrator account for your Team Task OS.
+          This will be the administrator account for your Team Task Assist.
         </p>}
         <form onSubmit={submit}>
           <div className="fi">

@@ -16,6 +16,10 @@ const schema = new S({
   attachments: [{ _id:false, id:String, name:String, type:String, size:Number, data:String }],
   rating:      { type: Number, min:0, max:5, default:0 },
   ratedBy:     { type: S.Types.ObjectId, ref: 'User', default: null },
+  approvalRequestedTo: { type: S.Types.ObjectId, ref: 'User', default: null },
+  approvalStatus:      { type: String, enum: ['','assigned','in_review','approved','comments_issued'], default: '' },
+  approvalComments:    { type: String, default: '' },
+  completedAt:         { type: Date, default: null },
 }, { timestamps: true });
 
 export default mongoose.models.Task || mongoose.model('Task', schema);

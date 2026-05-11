@@ -157,4 +157,10 @@ input[type=file]::file-selector-button { padding:4px 9px; border:1px solid var(-
 .cal-dots { display:flex; gap:2px; flex-wrap:wrap; }
 .cal-dot  { width:5px; height:5px; border-radius:50%; }
 
+/* Approval status badges */
+.t-apr-asgn { background:rgba(127,119,221,.18); color:#a0a0e8; }
+.t-apr-rev  { background:rgba(210,130,50,.22);  color:#d4853a; }
+.t-apr-ok   { background:rgba(30,160,120,.18);  color:#1D9E75; }
+.t-apr-cmt  { background:rgba(220,60,60,.18);   color:#e05555; }
+
 @media(max-width:520px) { .stats { grid-template-columns:repeat(2,1fr); } }

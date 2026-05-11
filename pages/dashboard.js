@@ -12,6 +12,8 @@ const PRI = {
 };
 const ST_CLS = { assigned:'t-sass', scheduled:'t-ssched', inprogress:'t-sinp', done:'t-sdone' };
 const ST_LBL = { assigned:'Assigned', scheduled:'Scheduled', inprogress:'In Progress', done:'Completed' };
+const APR_CLS = { assigned:'t-apr-asgn', in_review:'t-apr-rev', approved:'t-apr-ok', comments_issued:'t-apr-cmt' };
+const APR_LBL = { assigned:'Approval: Assigned', in_review:'In Review', approved:'Approved', comments_issued:'Comments Issued' };
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -114,6 +116,11 @@ function TaskCard({ task, num, users, companies, canRate, onRate, onClick }) {
             {au.name}
           </span>}
           {subs.length > 0 && <span style={{ fontSize:11, color:'var(--t3)' }}>✓ {sd}/{subs.length}</span>}
+          {task.approvalStatus && (
+            <span className={`tag ${APR_CLS[task.approvalStatus]||''}`}>
+              🔍 {APR_LBL[task.approvalStatus]||task.approvalStatus}
+            </span>
+          )}
           {links.map(l => (
             <a key={l.id} className="lnkbdg" href={l.url} target="_blank" rel="noopener"
                onClick={e => e.stopPropagation()}>↗ {l.label || l.url.replace(/^https?:\/\//,'').split('/')[0]}</a>
@@ -124,16 +131,31 @@ function TaskCard({ task, num, users, companies, canRate, onRate, onClick }) {
             </button>
           ))}
         </div>
-        {st === 'done' && (
-          <div className="rating-row">
-            <span style={{ fontSize:11, color:'var(--t3)' }}>Rating:</span>
-            <Stars taskId={task.id||task._id?.toString()} rating={task.rating||0} editable={canRate} onRate={onRate} />
-            {task.rating
-              ? <span style={{ fontSize:12, color:'#f0a030', fontWeight:600 }}>{task.rating}/5</span>
-              : <span style={{ fontSize:11, color:'var(--t3)' }}>{canRate ? 'not yet rated' : '—'}</span>
-            }
-          </div>
-        )}
+        {st === 'done' && (() => {
+          const end   = task.completedAt || task.updatedAt;
+          const start = task.createdAt;
+          let daysLbl = null;
+          if (end && start) {
+            const ms = new Date(end) - new Date(start);
+            const days = Math.max(0, Math.round(ms / 86400000));
+            daysLbl = days === 0 ? 'same day' : days === 1 ? '1 day' : `${days} days`;
+          }
+          return (
+            <div className="rating-row">
+              <span style={{ fontSize:11, color:'var(--t3)' }}>Rating:</span>
+              <Stars taskId={task.id||task._id?.toString()} rating={task.rating||0} editable={canRate} onRate={onRate} />
+              {task.rating
+                ? <span style={{ fontSize:12, color:'#f0a030', fontWeight:600 }}>{task.rating}/5</span>
+                : <span style={{ fontSize:11, color:'var(--t3)' }}>{canRate ? 'not yet rated' : '—'}</span>
+              }
+              {daysLbl && (
+                <span style={{ fontSize:11, color:'var(--t3)' }}>
+                  · ⏱ completed in {daysLbl}
+                </span>
+              )}
+            </div>
+          );
+        })()}
         {subs.length > 0 && (
           <div className="prog"><div className={`progf ${sp===100?'full':''}`} style={{ width:`${sp}%` }} /></div>
         )}
@@ -151,11 +173,22 @@ function dlAtt(a) {
 // ── Task Modal ────────────────────────────────────────────────────────────────
 function TaskModal({ task, users, companies, me, onSave, onDelete, onClose }) {
   const isNew = !task._id && !task.id;
+  const meId  = me.id || me._id?.toString();
+  // Approval permission flags (based on original task data, not live form)
+  const isAssignee  = (task.assignedTo?.toString() || '') === meId;
+  const isApprover  = !!(task.approvalRequestedTo) && task.approvalRequestedTo?.toString() === meId;
+  const isAdminUser = me.role === 'admin';
+  const canRequest  = isAssignee || isAdminUser;   // can submit / cancel
+  const canReview   = isApprover || isAdminUser;   // can change status / add comments
+
   const [form, setForm] = useState({
     title: task.title||'', description: task.description||'',
     notes: task.notes||'', companyId: task.companyId||'',
     assignedTo: task.assignedTo||'', priority: task.priority||'',
     status: normSt(task.status), deadline: task.deadline||'',
+    approvalRequestedTo: task.approvalRequestedTo?.toString() || '',
+    approvalStatus:      task.approvalStatus || '',
+    approvalComments:    task.approvalComments || '',
   });
   const [subs, setSubs] = useState(task.subtasks ? [...task.subtasks] : []);
   const [links, setLinks] = useState(task.links ? [...task.links] : []);
@@ -219,7 +252,8 @@ function TaskModal({ task, users, companies, me, onSave, onDelete, onClose }) {
             <div className="fi"><label>Assign to</label>
               <select className="sel" value={form.assignedTo} onChange={set('assignedTo')}>
                 <option value="">— Unassigned —</option>
-                {users?.map(u => <option key={u.id||u._id} value={u.id||u._id}>{u.name} ({u.role})</option>)}
+                {(me.role === 'admin' ? users : users?.filter(u => u.role !== 'admin'))
+                  ?.map(u => <option key={u.id||u._id} value={u.id||u._id}>{u.name} ({u.role})</option>)}
               </select>
             </div>
           </div>
@@ -316,6 +350,85 @@ function TaskModal({ task, users, companies, me, onSave, onDelete, onClose }) {
               <strong>Completed</strong> — the user has finished the task.
             </div>
           </div>
+
+          {/* ── Approval ─────────────────────────────────────────────── */}
+          {!isNew && (canRequest || canReview || form.approvalRequestedTo) && (
+            <div style={{ marginTop:14, paddingTop:14, borderTop:'1px solid var(--b)' }}>
+              <div style={{ fontSize:12, color:'var(--t2)', fontWeight:600, marginBottom:8, letterSpacing:'.02em' }}>
+                🔍 Approval
+              </div>
+
+              {/* No approver selected yet — assignee / admin can pick one */}
+              {!form.approvalRequestedTo && canRequest && (
+                <div className="fi">
+                  <label>Submit for Approval — select approver</label>
+                  <select className="sel" value=""
+                    onChange={e => { if (e.target.value) setForm(f => ({ ...f, approvalRequestedTo: e.target.value, approvalStatus: 'assigned' })); }}>
+                    <option value="">— Select approver —</option>
+                    {users?.filter(u => (u.id||u._id?.toString()) !== form.assignedTo)
+                      .map(u => <option key={u.id||u._id} value={u.id||u._id}>{u.name} ({u.role})</option>)}
+                  </select>
+                  <p style={{ fontSize:11, color:'var(--t3)', marginTop:4 }}>
+                    Selecting an approver submits the request when you save.
+                  </p>
+                </div>
+              )}
+
+              {/* Approver selected — show status + controls */}
+              {form.approvalRequestedTo && (() => {
+                const approverName = users?.find(u=>(u.id||u._id?.toString())===form.approvalRequestedTo)?.name || '—';
+                return (
+                  <>
+                    {/* Info row */}
+                    <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10, flexWrap:'wrap', padding:'8px 10px', background:'#151515', borderRadius:6, border:'1px solid var(--b)' }}>
+                      <span style={{ fontSize:12, color:'var(--t2)' }}>Approver:</span>
+                      <span style={{ fontSize:13, fontWeight:500 }}>{approverName}</span>
+                      {form.approvalStatus && (
+                        <span className={`tag ${APR_CLS[form.approvalStatus]||''}`}>
+                          {APR_LBL[form.approvalStatus]||form.approvalStatus}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Approver / admin: update status */}
+                    {canReview && (
+                      <div className="fi">
+                        <label>Approval Status</label>
+                        <select className="sel" value={form.approvalStatus} onChange={set('approvalStatus')}>
+                          <option value="assigned">Assigned</option>
+                          <option value="in_review">In Review</option>
+                          <option value="approved">Approved</option>
+                          <option value="comments_issued">Comments Issued</option>
+                        </select>
+                      </div>
+                    )}
+
+                    {/* Comments: editable for approver/admin, read-only otherwise */}
+                    {canReview ? (
+                      <div className="fi">
+                        <label>Comments</label>
+                        <textarea className="ta" value={form.approvalComments} onChange={set('approvalComments')}
+                          placeholder="Add review comments…" />
+                      </div>
+                    ) : form.approvalComments ? (
+                      <div style={{ background:'#151515', border:'1px solid var(--b)', borderRadius:6, padding:'10px 12px', fontSize:13, color:'var(--t2)', lineHeight:1.6, marginBottom:8 }}>
+                        <div style={{ fontSize:11, color:'var(--t3)', marginBottom:4 }}>Comments from approver:</div>
+                        {form.approvalComments}
+                      </div>
+                    ) : null}
+
+                    {/* Cancel — assignee / admin only, locked once approved */}
+                    {canRequest && form.approvalStatus !== 'approved' && (
+                      <button className="btn btn-sm btn-d" style={{ marginTop:4 }}
+                        onClick={() => setForm(f => ({ ...f, approvalRequestedTo:'', approvalStatus:'', approvalComments:'' }))}>
+                        Cancel Approval Request
+                      </button>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          )}
         </div>
         <div className="mf">
           <div>{!isNew && <button className="btn btn-sm btn-d" onClick={onDelete}>Delete</button>}</div>
@@ -662,17 +775,25 @@ export default function Dashboard() {
   const canRate = me.role === 'admin' || me.role === 'manager';
 
   // ── Visibility ─────────────────────────────────────────────────────────────
+  // Admins are a separate level above managers — managers never see admin tasks.
+  const adminIds = new Set(allUsers.filter(u=>u.role==='admin').map(u=>u.id||u._id?.toString()));
+
   function getVisibleIds() {
-    if (me.role === 'admin') return allUsers.map(u=>u.id||u._id?.toString());
+    if (me.role === 'admin' && managerMode) return allUsers.map(u=>u.id||u._id?.toString());
+    if (me.role === 'admin' && !managerMode) return [meId];
     if (me.role === 'manager' && managerMode) {
       const ids = new Set([meId]);
-      // direct reports
-      allUsers.filter(u=>u.managerId?.toString()===meId).forEach(u=>ids.add(u.id||u._id?.toString()));
-      // supervised managers + their reports
+      // direct reports — exclude admins (separate level)
+      allUsers
+        .filter(u=>u.managerId?.toString()===meId && u.role !== 'admin')
+        .forEach(u=>ids.add(u.id||u._id?.toString()));
+      // supervised managers + their reports — exclude admins
       const supMgrs = allUsers.filter(u=>u.supervisorId?.toString()===meId&&u.role==='manager');
       supMgrs.forEach(m=>{
         const mid=m.id||m._id?.toString(); ids.add(mid);
-        allUsers.filter(u=>u.managerId?.toString()===mid).forEach(u=>ids.add(u.id||u._id?.toString()));
+        allUsers
+          .filter(u=>u.managerId?.toString()===mid && u.role !== 'admin')
+          .forEach(u=>ids.add(u.id||u._id?.toString()));
       });
       return [...ids];
     }
@@ -681,7 +802,12 @@ export default function Dashboard() {
 
   const visibleIds = getVisibleIds();
   const visibleTasks = allTasks.filter(t => {
-    const aid = t.assignedTo?.toString();
+    const aid  = t.assignedTo?.toString();
+    const artId = t.approvalRequestedTo?.toString();
+    // Always show tasks where I am the designated approver
+    if (artId && artId === meId) return true;
+    // Non-admins can never see tasks assigned to an admin
+    if (aid && me.role !== 'admin' && adminIds.has(aid)) return false;
     return !t.assignedTo || visibleIds.includes(aid);
   });
   const visibleCos = me.role === 'admin' ? allCos : allCos.filter(c => {
@@ -831,7 +957,7 @@ export default function Dashboard() {
           {oCnt>0 && <span className="tag t-dov">{oCnt} overdue</span>}
         </div>
         <div style={{display:'flex',gap:6,alignItems:'center',flexWrap:'wrap'}}>
-          {me.role==='manager' && (
+          {(me.role==='admin' || me.role==='manager') && (
             <div className="mode-toggle">
               <button className={`mode-btn ${managerMode?'on':''}`} onClick={()=>setManagerMode(true)}>👥 Team</button>
               <button className={`mode-btn ${!managerMode?'on':''}`} onClick={()=>setManagerMode(false)}>👤 My Tasks</button>
@@ -851,8 +977,8 @@ export default function Dashboard() {
       <div className="tabs">
         {[
           {id:'all',      lb:'All tasks',    st:''},
-          {id:'today',    lb:'Today',        st:'blue',  cnt:tCnt},
           {id:'overdue',  lb:'Overdue',      st:'red',   cnt:oCnt},
+          {id:'today',    lb:'Today',        st:'blue',  cnt:tCnt},
           {id:'briefing', lb:"Tomorrow",     st:''},
           {id:'completed',lb:'✓ Completed',  st:'green', cnt:dCnt},
           {id:'calendar', lb:'📅 Calendar',  st:''},
@@ -870,9 +996,29 @@ export default function Dashboard() {
         {visibleCos.map(c=>{
           const cid=c.id||c._id?.toString();
           const cnt=visibleTasks.filter(t=>t.companyId?.toString()===cid&&t.status!=='done').length;
-          return <button key={cid} className={`tab ${view===cid?'act':''}`} onClick={()=>setView(cid)}>
-            <span className="dot" style={{background:c.color}} />{c.name}<span className="cnt">{cnt}</span>
-          </button>;
+          return (
+            <div key={cid} style={{display:'inline-flex',alignItems:'center',gap:0}}>
+              <button className={`tab ${view===cid?'act':''}`}
+                style={me.role==='admin'?{borderTopRightRadius:0,borderBottomRightRadius:0,borderRight:'none'}:{}}
+                onClick={()=>setView(cid)}>
+                <span className="dot" style={{background:c.color}} />{c.name}<span className="cnt">{cnt}</span>
+              </button>
+              {me.role==='admin' && (
+                <button
+                  title="Edit / delete company"
+                  onClick={()=>setModal({type:'co',data:c})}
+                  style={{
+                    padding:'5px 7px', fontSize:11, lineHeight:1, cursor:'pointer',
+                    background:'transparent', border:'1px solid var(--b2)',
+                    borderLeft:'none', borderTopRightRadius:20, borderBottomRightRadius:20,
+                    color:'var(--t3)', fontFamily:'inherit',
+                  }}
+                  onMouseEnter={e=>{e.currentTarget.style.color='var(--t)';e.currentTarget.style.background='var(--b2)';}}
+                  onMouseLeave={e=>{e.currentTarget.style.color='var(--t3)';e.currentTarget.style.background='transparent';}}
+                >✎</button>
+              )}
+            </div>
+          );
         })}
         {me.role==='admin' && <button className="tab tab-dashed" onClick={()=>setModal({type:'co',data:{}})}>+ Company</button>}
       </div>

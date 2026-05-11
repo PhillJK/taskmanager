@@ -7,16 +7,21 @@ async function visibleQuery(me, allUsers) {
   if (me.role === 'admin') return {};
   const ids = new Set([me.id]);
   if (me.role === 'manager') {
-    // direct reports
-    allUsers.filter(u => u.managerId?.toString() === me.id).forEach(u => ids.add(u._id.toString()));
-    // supervised managers + their reports
+    // direct reports — admins are a separate level and are never visible to managers
+    allUsers
+      .filter(u => u.managerId?.toString() === me.id && u.role !== 'admin')
+      .forEach(u => ids.add(u._id.toString()));
+    // supervised managers + their reports — exclude admins
     const supMgrs = allUsers.filter(u => u.supervisorId?.toString() === me.id && u.role === 'manager');
     supMgrs.forEach(m => {
       ids.add(m._id.toString());
-      allUsers.filter(u => u.managerId?.toString() === m._id.toString()).forEach(u => ids.add(u._id.toString()));
+      allUsers
+        .filter(u => u.managerId?.toString() === m._id.toString() && u.role !== 'admin')
+        .forEach(u => ids.add(u._id.toString()));
     });
   }
-  return { assignedTo: { $in: [...ids] } };
+  // Also surface tasks the user has been asked to approve
+  return { $or: [{ assignedTo: { $in: [...ids] } }, { approvalRequestedTo: me.id }] };
 }
 
 export default async function handler(req, res) {
