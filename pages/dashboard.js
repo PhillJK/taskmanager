@@ -19,10 +19,25 @@ const MONTHS = ['January','February','March','April','May','June','July','August
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,6);
 const fetcher = url => fetch(url).then(r => { if(!r.ok) throw new Error(); return r.json(); });
-const api = (url, method='GET', body) => fetch(url, {
-  method, headers: body ? {'Content-Type':'application/json'} : {},
-  body: body ? JSON.stringify(body) : undefined,
-}).then(r => r.json());
+const api = async (url, method='GET', body) => {
+  const r = await fetch(url, {
+    method, headers: body ? {'Content-Type':'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  // Next returns HTML (not JSON) for 413 / 500 etc. — parse defensively.
+  const txt = await r.text();
+  let data = null;
+  try { data = txt ? JSON.parse(txt) : null; } catch { data = null; }
+  if (!r.ok) {
+    const msg = (data && data.error)
+      || (r.status === 413 ? 'File too large — total request exceeded server limit.' : null)
+      || `Request failed (${r.status})`;
+    const err = new Error(msg);
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+};
 
 function isoToday() {
   const n = new Date();
@@ -197,6 +212,7 @@ function TaskModal({ task, users, companies, me, onSave, onDelete, onClose }) {
   const [newLinkUrl, setNewLinkUrl] = useState('');
   const [newLinkLabel, setNewLinkLabel] = useState('');
   const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState('');
 
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }));
 
@@ -221,9 +237,15 @@ function TaskModal({ task, users, companies, me, onSave, onDelete, onClose }) {
 
   async function save() {
     if (!form.title.trim()) return;
+    setSaveErr('');
     setSaving(true);
-    await onSave({ ...form, subtasks:subs, links, attachments:atts });
-    setSaving(false);
+    try {
+      await onSave({ ...form, subtasks:subs, links, attachments:atts });
+    } catch (e) {
+      setSaveErr(e?.message || 'Could not save. Please try again.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   const canPickDate = () => { try { document.getElementById('mDl')?.showPicker(); } catch(e) {} };
@@ -255,6 +277,11 @@ function TaskModal({ task, users, companies, me, onSave, onDelete, onClose }) {
                 {(me.role === 'admin' ? users : users?.filter(u => u.role !== 'admin'))
                   ?.map(u => <option key={u.id||u._id} value={u.id||u._id}>{u.name} ({u.role})</option>)}
               </select>
+              {!isNew && (
+                <p style={{ fontSize:11, color:'var(--t3)', marginTop:4 }}>
+                  Changing this hands the task off — it will appear in the new assignee's list instead of yours.
+                </p>
+              )}
             </div>
           </div>
           <div className="r2">
@@ -403,6 +430,34 @@ function TaskModal({ task, users, companies, me, onSave, onDelete, onClose }) {
                       </div>
                     )}
 
+                    {/* Approver / admin: forward (re-assign) approval to someone else */}
+                    {canReview && form.approvalStatus !== 'approved' && (
+                      <div className="fi">
+                        <label>Forward approval to another person</label>
+                        <select className="sel" value=""
+                          onChange={e => {
+                            if (!e.target.value) return;
+                            const u = users?.find(x => (x.id||x._id?.toString()) === e.target.value);
+                            const name = u?.name || 'someone else';
+                            if (!confirm(`Forward this approval request to ${name}? You'll no longer be the approver.`)) {
+                              e.target.value = ''; return;
+                            }
+                            setForm(f => ({ ...f, approvalRequestedTo: e.target.value, approvalStatus: 'assigned' }));
+                          }}>
+                          <option value="">— Keep with me —</option>
+                          {users
+                            ?.filter(u => {
+                              const uid2 = u.id||u._id?.toString();
+                              return uid2 !== form.approvalRequestedTo && uid2 !== form.assignedTo;
+                            })
+                            .map(u => <option key={u.id||u._id} value={u.id||u._id}>{u.name} ({u.role})</option>)}
+                        </select>
+                        <p style={{ fontSize:11, color:'var(--t3)', marginTop:4 }}>
+                          Forwarding transfers the approval request and resets the status to <em>Assigned</em>. Existing comments are kept for context.
+                        </p>
+                      </div>
+                    )}
+
                     {/* Comments: editable for approver/admin, read-only otherwise */}
                     {canReview ? (
                       <div className="fi">
@@ -430,6 +485,11 @@ function TaskModal({ task, users, companies, me, onSave, onDelete, onClose }) {
             </div>
           )}
         </div>
+        {saveErr && (
+          <div style={{ padding:'8px 16px', background:'rgba(220,60,60,.12)', borderTop:'1px solid rgba(220,60,60,.3)', color:'#e05555', fontSize:12 }}>
+            ⚠ {saveErr}
+          </div>
+        )}
         <div className="mf">
           <div>{!isNew && <button className="btn btn-sm btn-d" onClick={onDelete}>Delete</button>}</div>
           <div style={{ display:'flex', gap:7 }}>

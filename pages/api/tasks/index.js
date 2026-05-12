@@ -3,6 +3,10 @@ import { requireAuth } from '../../../lib/session';
 import User from '../../../models/User';
 import Task from '../../../models/Task';
 
+// Attachments are base64-encoded in the JSON body; the Next default of 1 MB is
+// far too small. Raise the body parser limit so multi-MB attachments go through.
+export const config = { api: { bodyParser: { sizeLimit: '15mb' } } };
+
 async function visibleQuery(me, allUsers) {
   if (me.role === 'admin') return {};
   const ids = new Set([me.id]);

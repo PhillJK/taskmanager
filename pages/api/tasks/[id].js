@@ -2,6 +2,9 @@ import { connectDB } from '../../../lib/mongodb';
 import { requireAuth } from '../../../lib/session';
 import Task from '../../../models/Task';
 
+// Allow large JSON payloads (base64-encoded attachments).
+export const config = { api: { bodyParser: { sizeLimit: '15mb' } } };
+
 export default async function handler(req, res) {
   const me = await requireAuth(req, res);
   if (!me) return;
